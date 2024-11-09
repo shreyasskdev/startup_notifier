@@ -1,37 +1,53 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <windows.h>
+#include <curl/curl.h>
+#include <threads.h>
 #include <time.h>
 
+#ifdef _WIN32
+    #include <windows.h>
+    #include <lmcons.h>
+#else
+    #include <unistd.h>
+    #include <pwd.h>
+    #include <sys/types.h>
+#endif
+
+char* get_username() {
+    static char username[256];
+
+    #ifdef _WIN32
+        DWORD username_len = UNLEN + 1;
+        if (GetUserNameA(username, &username_len)) {
+            return username;
+        }
+    #else
+        struct passwd *pw = getpwuid(geteuid());
+        if (pw != NULL) {
+            snprintf(username, sizeof(username), "%s", pw->pw_name);
+            return username;
+        }
+    #endif
+
+    return NULL;
+}
 
 int sendNotification() {
-    STARTUPINFO si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
+    CURL *curl = curl_easy_init();
 
-    // CMD command here
-    char arg[] = "cmd.exe /c for /f \"delims=\" %i in ('whoami') do curl -d \"%i\" ntfy.sh/notify";
-
-    // Run process
-    int result = CreateProcessA(NULL, arg, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    
-    if (result) {
-        // Wait for the process to finish and get the exit code
-        WaitForSingleObject(pi.hProcess, INFINITE);
-        DWORD exitCode;
-        GetExitCodeProcess(pi.hProcess, &exitCode);
-        
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        
-        return exitCode; // Return the exit code
-    } else {
-        printf("CreateProcess failed (%d).\n", GetLastError());
-        return -1; // Return error code
+    if (!curl){
+        printf("Could not initialize curl.");
+        return(1);
     }
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://ntfy.sh/skdev");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, get_username());
+
+    int result = curl_easy_perform(curl);
+
+    curl_easy_cleanup(curl);
+    return result;
 }
 
 void exponential_backoff(int max_tries, int base_delay, int max_delay) {
@@ -48,7 +64,10 @@ void exponential_backoff(int max_tries, int base_delay, int max_delay) {
 			}
 
 			printf("Operation failed. Retrying in %d seconds\n", wait_time);
-			Sleep(wait_time * 1000);
+
+			struct timespec duration;
+			duration.tv_sec = wait_time;
+			thrd_sleep(&duration, NULL);
 
 			retry_count++;
 		}
@@ -59,7 +78,7 @@ void exponential_backoff(int max_tries, int base_delay, int max_delay) {
 int main() {
 
 	exponential_backoff(9999, 1, 32);
-	
-	
+
+
 	return 0;
 }
